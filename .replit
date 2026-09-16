@@ -1,0 +1,27 @@
+entrypoint = "scripts/start-codeyam.mjs"
+modules = ["nodejs-20"]
+run = "npm run codeyam"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[workflows]
+runButton = "CodeYam Editor (staging)"
+
+[[workflows.workflow]]
+name = "CodeYam Editor (staging)"
+author = "codeyam"
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run update:staging"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run codeyam"
+waitForPort = 5000

@@ -1,0 +1,24 @@
+{
+  "name": "codeyam-replit-starter-staging",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Start CodeYam Editor from the staging channel, for testing unreleased changes",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "update:staging": "npm install @codeyam-editor/codeyam-editor@staging --no-audit --no-fund",
+    "channel": "codeyam-editor --version",
+    "smoke": "node scripts/smoke.mjs",
+    "codeyam": "node scripts/start-codeyam.mjs",
+    "init:claude": "codeyam-editor init --provider claude",
+    "init:codex": "codeyam-editor init --provider codex",
+    "init:gemini": "codeyam-editor init --provider gemini",
+    "init:opencode": "codeyam-editor init --provider opencode",
+    "doctor": "codeyam-editor editor config-show"
+  },
+  "dependencies": {
+    "@codeyam-editor/codeyam-editor": "staging"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

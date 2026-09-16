@@ -1,0 +1,23 @@
+node_modules/
+
+# Deliberately NOT committed. This repo tracks the `staging` dist-tag, so the
+# newest staging build must resolve on every install. A committed lockfile
+# would pin one build forever and defeat the point of the repo.
+package-lock.json
+.cache/
+.env
+.env.*
+!.env.example
+
+# Per-developer CodeYam state
+.codeyam/editor.local.json
+.codeyam/logs/
+.codeyam/run/
+
+# AI provider credentials and local state
+.claude/settings.local.json
+
+# OS and editor files
+.DS_Store
+*.log
+
