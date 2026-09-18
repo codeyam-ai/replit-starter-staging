@@ -17,9 +17,14 @@ target and will break when a staging build breaks — that is its job.
 | install | `npm ci`, reproducible | `npm install`, newest staging build |
 | Run workflow | install, start | install, **refresh staging**, start |
 
-Everything under `scripts/` is byte-identical to the stable starter. Keep it
-that way: sync with `cp ../replit-starter/scripts/*.mjs scripts/` and let the
-differences live in `package.json`, `.replit`, `.gitignore`, and this file.
+`setup.mjs` and `smoke.mjs` are byte-identical to the stable starter and should
+stay that way — sync them with
+`cp ../replit-starter/scripts/{setup,smoke}.mjs scripts/`.
+
+`env.mjs` and `start-codeyam.mjs` deliberately diverge: this repo declares an
+access mode and runs `start --hosted`, neither of which exists in the 0.1.10
+build the stable starter pins. They converge again when stable moves to a
+release that has both.
 
 ## Access mode
 
