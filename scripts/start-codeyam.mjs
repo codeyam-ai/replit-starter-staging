@@ -1,6 +1,12 @@
 import { existsSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { childEnv, port, portError, provider, providerError } from "./env.mjs";
+import {
+  accessMode,
+  childEnv,
+  portError,
+  provider,
+  providerError,
+} from "./env.mjs";
 
 for (const error of [providerError(), portError()]) {
   if (error) {
@@ -55,17 +61,25 @@ console.warn(
   [
     "",
     "Starting CodeYam Editor for access through the workspace web preview.",
-    "The control API requires a session token on this bind; your browser gets",
-    "it automatically. Keep the workspace and its preview private anyway.",
+    `Access mode: ${accessMode}. In "open" mode the editor issues a control-plane`,
+    "session to every visitor, so the privacy of this workspace and its URL is",
+    "the access boundary. Keep both private; do not deploy this publicly.",
     "",
   ].join("\n"),
 );
 
-const editor = spawn(
-  "codeyam-editor",
-  ["start", "--no-open", "--bind-host", "0.0.0.0", "--port", port],
-  { stdio: "inherit", env },
-);
+// `--hosted` is upstream's supported entry point for a hosted workspace. It
+// replaces the recipe this script used to hand-roll (`--no-open --bind-host
+// 0.0.0.0 --port "$PORT"`), which upstream calls out by name as the thing every
+// hosted template duplicates and gets subtly wrong. It reads the platform's
+// PORT, binds the external interface, skips the browser probe, serves the Live
+// Preview same-origin so only ONE port needs publishing, and validates the
+// whole combination before binding anything -- exiting 2 with a
+// `Next valid action:` line rather than failing halfway up.
+const editor = spawn("codeyam-editor", ["start", "--hosted"], {
+  stdio: "inherit",
+  env,
+});
 
 editor.on("error", (error) => {
   console.error(`Unable to start CodeYam Editor: ${error.message}`);

@@ -16,7 +16,7 @@
     "doctor": "codeyam-editor editor config-show"
   },
   "dependencies": {
-    "@codeyam-editor/codeyam-editor": "staging"
+    "@codeyam-editor/codeyam-editor": "^0.1.11-staging.gf7d5b1a"
   },
   "engines": {
     "node": ">=20.0.0"

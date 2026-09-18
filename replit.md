@@ -35,6 +35,12 @@ builds. Preserve the CodeYam setup when implementing user requests.
 - Do not remove the `npm_config_prefix` / `PATH` setup in the startup script;
   those provider CLI installs fail without it.
 - Keep the editor server on the port selected by the startup script (`5000`).
+- Keep `codeyam-editor start --hosted`. Do not revert to hand-rolled
+  `--bind-host` / `--port` flags; hosted mode validates the whole combination
+  before binding.
+- The access mode is declared in `scripts/env.mjs` and is `open` on purpose.
+  Do not change it, and do not write one into `.codeyam/editor.json` instead —
+  that hides a security decision inside generated config.
 - Do not add a second workflow or change the run button target.
 - Do not call `codeyam-editor editor install-hooks` from `npm run setup` or
   from the startup script: it creates a git commit. Run it only when a user

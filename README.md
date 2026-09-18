@@ -21,6 +21,49 @@ Everything under `scripts/` is byte-identical to the stable starter. Keep it
 that way: sync with `cp ../replit-starter/scripts/*.mjs scripts/` and let the
 differences live in `package.json`, `.replit`, `.gitignore`, and this file.
 
+## Access mode
+
+Builds from 0.1.11-staging onward refuse to issue a session on a non-loopback
+bind until an access mode is declared. This repo declares one, in
+`scripts/env.mjs`, so the decision is reviewable here rather than improvised by
+whatever agent hits the boot failure first:
+
+```js
+export const accessMode = process.env.CODEYAM_EDITOR_ACCESS_MODE || "open";
+```
+
+`open` means the editor issues a control-plane session to every visitor, and
+upstream logs that at startup. The privacy of the Replit workspace and its dev
+URL is the access boundary — **anyone with that URL reaches a live agent with
+write access to this repo.** Keep it private.
+
+The alternatives do not fit a Replit preview:
+
+- `token` issues a session only from a validated `?cy_token=` exchange. The
+  session cookie is `SameSite=Lax` with no `SameSite=None` option, and Replit's
+  webview is a cross-site iframe, so the embedded preview never carries it.
+- `trusted-proxy` needs an upstream proxy that proves itself with a shared
+  secret header. Replit's preview is not one.
+
+This is not weaker than the editor was before access modes existed: that
+already handed a session to anyone who could reach it. Declaring `open` makes
+the same posture explicit and logged.
+
+Override for a one-off with `CODEYAM_EDITOR_ACCESS_MODE`.
+
+## Hosted mode
+
+The starter runs `codeyam-editor start --hosted`, upstream's supported entry
+point for a hosted workspace. It reads the platform's `PORT`, binds the
+external interface, skips the browser probe, serves the Live Preview
+same-origin so only one port needs publishing, and validates the whole
+combination *before* binding — exiting `2` with a `Next valid action:` line
+rather than failing halfway up.
+
+It replaces the hand-rolled `--no-open --bind-host 0.0.0.0 --port "$PORT"`
+recipe this starter used to carry, which upstream names as the thing every
+hosted template duplicates and gets subtly wrong in a different way.
+
 ## Which build am I running?
 
 The startup banner prints it, and so does:

@@ -13,6 +13,7 @@
 // 5000 is taken -- on macOS, AirPlay Receiver holds it by default.
 
 import { spawn, spawnSync } from "node:child_process";
+import { request as httpRequest } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,8 @@ const BOOT_TIMEOUT_MS = 120_000;
 const PREVIEW_TIMEOUT_MS = 60_000;
 // The editor binds its Live Preview reverse proxy here for the app.
 const APP_PORT = 3000;
+// Where a cookie-less browser navigation is sent to obtain a session.
+const BOOTSTRAP_PATH = "/__codeyam_session_bootstrap";
 const REPO = process.cwd();
 
 let failures = 0;
@@ -50,6 +53,31 @@ function sh(cmd, args, opts = {}) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/// Issue a request with EXACTLY the given headers, over raw http.
+///
+/// Node's `fetch` cannot express a browser navigation: undici injects its own
+/// `Sec-Fetch-Mode`, and the editor's navigation check correctly refuses to let
+/// `Accept` override a `Sec-Fetch-Mode` that says this is a subresource fetch.
+/// So a `fetch`-based probe is always classified as a fetch, and the cold
+/// navigation case below cannot be tested with it -- it reports the pre-fix
+/// behavior against a build that has the fix.
+function rawRequest(path, headers) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      { host: HOST, port: Number(PORT), path, method: "GET", headers },
+      (res) => {
+        res.resume();
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 
 /// Fail fast, and legibly, when a port the editor needs is already taken.
 /// APP_PORT matters as much as PORT: the editor binds a reverse proxy there for
@@ -168,6 +196,11 @@ try {
   // it spawns -- into one process group. Signalling the group is the only
   // teardown that actually reaches the editor: SIGTERM to npm alone leaves the
   // grandchild running, holding the port and the temp checkout open.
+  // Must run before the spawn: a stale listener from a previous run answers
+  // every probe below and the whole suite silently tests the wrong process.
+  await requirePortFree(PORT);
+  await requirePortFree(APP_PORT);
+  check(`ports ${PORT} and ${APP_PORT} are free`, true);
   editor = spawn("npm", ["run", "codeyam"], {
     cwd: checkout,
     env: { ...process.env, PORT },
@@ -184,10 +217,13 @@ try {
 
   const root = await waitForBoot();
   check(`editor answered on ${BASE}`, true);
+  // Match the address, not the sentence around it: the legacy path prints
+  // "running at http://0.0.0.0:<port>" and hosted mode prints it in an indented
+  // "local:" row. Pinning either phrasing tests the banner, not the bind.
   check(
     "bound to 0.0.0.0, not just loopback",
-    /running at http:\/\/0\.0\.0\.0:/.test(log),
-    "expected the startup banner to report an 0.0.0.0 bind",
+    new RegExp(`0\\.0\\.0\\.0:${PORT}`).test(log),
+    `no 0.0.0.0:${PORT} in the startup output`,
   );
 
   // 4. GET / issues the session cookie on the HTML document.
@@ -242,57 +278,80 @@ try {
   console.log("\nHosted preview");
   const prevAuthed = await fetchPreviewWhenReady({ cookie });
   const prevBody = await prevAuthed.text();
-  check(
-    "authenticated preview returns HTML",
+  const servedHtml =
     prevAuthed.status === 200 &&
-      (prevAuthed.headers.get("content-type") ?? "").includes("text/html"),
+    (prevAuthed.headers.get("content-type") ?? "").includes("text/html");
+  check(
+    "authenticated preview answers",
+    servedHtml || prevAuthed.status === 503,
     `status ${prevAuthed.status}, type ${prevAuthed.headers.get("content-type")}`,
   );
-  check(
-    "preview body is a real document",
-    /<!DOCTYPE html>/i.test(prevBody),
-    prevBody.slice(0, 120),
-  );
+  if (servedHtml) {
+    check(
+      "preview body is a real document",
+      /<!DOCTYPE html>/i.test(prevBody),
+      prevBody.slice(0, 120),
+    );
+  }
 
   // With no app configured the preview must still serve the editor's own
   // no-app surface rather than erroring -- this is the state every imported
   // project starts in, so it is the state most worth pinning.
+  // With no app configured, what the preview serves depends on the start path
+  // AND on whether a dev server was ever expected: hosted mode answers 503 with
+  // a sentence naming the cause, the legacy path serves the editor surface,
+  // sometimes with an `x-codeyam-dev-server-down` marker. All three are
+  // correct, so asserting any one of them pins transient state rather than
+  // behavior.
+  //
+  // The invariant worth holding is the one the demo-gate bug report is about:
+  // whatever lands in that pane must SAY something. A bare proxy error or an
+  // empty body is the failure -- a user asked to approve what they see cannot
+  // approve a blank frame.
+  const explains503 =
+    prevAuthed.status === 503 && /no app is configured/i.test(prevBody);
   check(
-    "no-app state stays on the editor surface",
-    prevAuthed.headers.get("x-codeyam-dev-server-down") === "1",
-    "expected the dev-server-down marker that drives the onboarding UI",
+    "no-app state is self-explaining, not a blank pane",
+    servedHtml || explains503,
+    `status ${prevAuthed.status}, body: ${prevBody.slice(0, 120)}`,
   );
   check(
-    "no-app state is not an error page",
-    prevAuthed.status === 200,
-    `got ${prevAuthed.status}`,
+    "no-app state is not a bare proxy error",
+    prevAuthed.status !== 502 && prevBody.trim().length > 0,
+    `got ${prevAuthed.status} with ${prevBody.length} bytes`,
   );
 
-  // 7. KNOWN WART, pinned deliberately.
+  // 7. A cold browser navigation must land somewhere usable.
   //
-  // A browser navigating straight to /__codeyam_preview/ before it holds a
-  // cookie gets raw 401 JSON, not HTML and not a redirect to `/` (which is
-  // what mints the cookie). That is a codeyam-editor issue, not something the
-  // starter can fix -- but it is exactly what a user hitting the Replit
-  // preview URL cold can land on.
+  // This is the case a user hits when the platform restores or deep-links the
+  // preview URL before any visit to `/`, so the request carries no cookie. It
+  // used to answer raw 401 JSON -- an internal auth error rendered where the
+  // app should be, recoverable only by knowing to open `/` first.
   //
-  // This asserts the CURRENT behavior. When upstream starts redirecting or
-  // serving HTML here, this check fails and should be rewritten to assert the
-  // better behavior.
-  console.log("\nKnown wart (pinned)");
-  const prevCold = await fetch(`${BASE}/__codeyam_preview/`, {
-    headers: { accept: "text/html" },
-    redirect: "manual",
+  // Builds carrying the session-bootstrap fix redirect instead: 303 to
+  // /__codeyam_session_bootstrap, which issues a session (subject to the
+  // declared access mode) and sends the browser back. Builds without it still
+  // answer JSON. Both are reported by name -- what fails is a third outcome,
+  // and what the label tells you is which build you are on.
+  console.log("\nCold browser navigation");
+  const cold = await rawRequest("/__codeyam_preview/", {
+    Accept: "text/html,application/xhtml+xml",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Dest": "document",
   });
-  const coldType = prevCold.headers.get("content-type") ?? "";
-  const stillWart =
-    prevCold.status === 401 && coldType.includes("application/json");
+  const coldType = cold.headers["content-type"] ?? "";
+  const bootstraps =
+    cold.status === 303 &&
+    (cold.headers.location ?? "").startsWith(BOOTSTRAP_PATH);
+  const rawJson = cold.status === 401 && coldType.includes("application/json");
   check(
-    "cold preview navigation still answers 401 JSON (upstream wart)",
-    stillWart,
-    `status ${prevCold.status}, type ${coldType} -- if this is now HTML or a ` +
-      `redirect, upstream fixed it: update this check to assert that instead`,
+    bootstraps
+      ? "cold navigation bootstraps a session (upstream fix present)"
+      : "cold navigation answers raw 401 JSON (known wart on this build)",
+    bootstraps || rawJson,
+    `status ${cold.status}, type ${coldType}, location ${cold.headers.location}`,
   );
+
 } catch (error) {
   failures += 1;
   console.log(`\nFAIL  ${error.message}`);
