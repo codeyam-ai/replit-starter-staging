@@ -9,6 +9,8 @@
 // tree: starting the editor scaffolds `.codeyam/`, rewrites `.gitignore`, and
 // COMMITS the refreshed tooling. None of that belongs in your checkout.
 //
+// It also asserts the committed `.replit` itself -- see scripts/replit-config.mjs.
+//
 // Port: defaults to 5000, the port Replit forwards. Override with PORT when
 // 5000 is taken -- on macOS, AirPlay Receiver holds it by default.
 
@@ -17,6 +19,7 @@ import { request as httpRequest } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkReplitConfig, checkStarterPackage } from "./replit-config.mjs";
 
 const PORT = process.env.PORT || "5000";
 const HOST = "127.0.0.1";
@@ -171,7 +174,22 @@ try {
   sh("git", ["clone", "--quiet", REPO, checkout]);
   check("cloned HEAD into a temp dir", true);
 
-  // 2. Install. Catches a lockfile that cannot resolve from the public
+  // 2. The committed workspace configuration. A healthy editor is not enough:
+  // the first hosted import failed with the server serving 200 on port 5000 and
+  // the Preview panel still reporting the app was not running, because nothing
+  // in `.replit` gave Preview something to attach to. These assertions are
+  // about the workspace; everything after them is about the server.
+  console.log("\nWorkspace configuration");
+  for (const [file, run] of [
+    [".replit", checkReplitConfig],
+    ["package.json", checkStarterPackage],
+  ]) {
+    for (const result of run(readFileSync(join(checkout, file), "utf8"))) {
+      check(result.name, result.ok, result.detail);
+    }
+  }
+
+  // 3. Install. Catches a lockfile that cannot resolve from the public
   // registry -- the exact failure that shipped in the first version of this
   // repo, where every `resolved` URL pointed at Replit's internal mirror.
   console.log("\nInstall");
@@ -190,7 +208,7 @@ try {
     undefined,
   );
 
-  // 3. Start on 0.0.0.0:PORT, exactly as the Replit workflow does.
+  // 4. Start on 0.0.0.0:PORT, exactly as the Replit workflow does.
   console.log("\nStart");
   // `detached` puts the whole chain -- npm, the wrapper, and the editor binary
   // it spawns -- into one process group. Signalling the group is the only
@@ -226,7 +244,7 @@ try {
     `no 0.0.0.0:${PORT} in the startup output`,
   );
 
-  // 4. GET / issues the session cookie on the HTML document.
+  // 5. GET / issues the session cookie on the HTML document.
   console.log("\nSession cookie");
   check("GET / returned 200", root.status === 200, `got ${root.status}`);
   const setCookie = root.headers.get("set-cookie") ?? "";
@@ -254,7 +272,7 @@ try {
     "the bearer path and the browser path must share one token",
   );
 
-  // 5. A protected endpoint is genuinely protected. /api/scenarios is used
+  // 6. A protected endpoint is genuinely protected. /api/scenarios is used
   // deliberately: /api/health, /api/config and /api/session-info are
   // token-EXEMPT by design (read-only, non-secret), so probing those would
   // pass whether or not auth works at all.
@@ -274,7 +292,7 @@ try {
     "the CLI and operator-script path must work too",
   );
 
-  // 6. The hosted preview route.
+  // 7. The hosted preview route.
   console.log("\nHosted preview");
   const prevAuthed = await fetchPreviewWhenReady({ cookie });
   const prevBody = await prevAuthed.text();
@@ -321,7 +339,7 @@ try {
     `got ${prevAuthed.status} with ${prevBody.length} bytes`,
   );
 
-  // 7. A cold browser navigation must land somewhere usable.
+  // 8. A cold browser navigation must land somewhere usable.
   //
   // This is the case a user hits when the platform restores or deep-links the
   // preview URL before any visit to `/`, so the request carries no cookie. It

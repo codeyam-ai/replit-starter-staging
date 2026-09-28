@@ -1,0 +1,41 @@
+# Every command this repo documents, run on every change.
+#
+# `check-replit` is the one that matters for imports: it fails if a package
+# install is added to the long-running web workflow, if the Run button stops
+# reaching the webview workflow, or if the port declarations disagree — the
+# three ways a workspace can be unusable while the editor itself is perfectly
+# healthy.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  workspace-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm run check:replit
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # The smoke test clones HEAD, so it needs real history, not a
+        # detached-commit-only checkout.
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # No lockfile here on purpose: this repo always resolves the newest
+      # staging build, so `npm ci` is not an option.
+      - run: npm install --no-audit --no-fund
+      - run: npm run channel
+      - run: npm run setup
+      - run: npm run smoke

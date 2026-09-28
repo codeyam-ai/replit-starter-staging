@@ -2,15 +2,48 @@ entrypoint = "scripts/start-codeyam.mjs"
 modules = ["nodejs-20"]
 run = "npm run codeyam"
 
+# Exactly one published port. Hosted CodeYam resolves its public origin from
+# this mapping, so a second entry is ambiguous and none leaves the editor bound
+# to a port nothing routes to.
 [[ports]]
 localPort = 5000
 externalPort = 80
 
 [workflows]
-runButton = "CodeYam Editor (staging)"
+runButton = "Project"
 
+# The Run button target. Replit's Preview panel attaches to the webview
+# workflow underneath, not to this one.
 [[workflows.workflow]]
-name = "CodeYam Editor (staging)"
+name = "Project"
+mode = "parallel"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+# The long-running web workflow. It starts the editor and nothing else.
+# Refreshing the staging build installs packages, and Replit restarts a
+# workflow when it detects a package install -- doing it here would restart the
+# workflow before the editor ever binds, so the port would never open. Use the
+# `Update staging build` workflow, or `npm run update:staging`, instead.
+[[workflows.workflow]]
+name = "Start application"
+author = "codeyam"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run codeyam"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+# Pulling a newer staging build. Deliberately a separate, short-lived workflow:
+# it is an explicit action, not part of starting the editor. Restart
+# `Start application` afterwards so the new binary is the one serving.
+[[workflows.workflow]]
+name = "Update staging build"
 author = "codeyam"
 mode = "sequential"
 
@@ -20,8 +53,3 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run update:staging"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run codeyam"
-waitForPort = 5000

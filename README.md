@@ -15,11 +15,12 @@ target and will break when a staging build breaks — that is its job.
 | dependency | pinned version (`0.1.10`) | the `staging` dist-tag |
 | `package-lock.json` | committed | **not** committed, deliberately |
 | install | `npm ci`, reproducible | `npm install`, newest staging build |
-| Run workflow | install, start | install, **refresh staging**, start |
+| Run workflow | starts the editor | starts the editor |
+| refreshing the build | n/a | a separate `Update staging build` workflow |
 
-`setup.mjs` and `smoke.mjs` are byte-identical to the stable starter and should
-stay that way — sync them with
-`cp ../replit-starter/scripts/{setup,smoke}.mjs scripts/`.
+`setup.mjs`, `smoke.mjs`, `replit-config.mjs`, and `check-replit.mjs` are
+byte-identical to the stable starter and should stay that way — sync them with
+`cp ../replit-starter/scripts/{setup,smoke,replit-config,check-replit}.mjs scripts/`.
 
 `env.mjs` and `start-codeyam.mjs` deliberately diverge: this repo declares an
 access mode and runs `start --hosted`, neither of which exists in the 0.1.10
@@ -69,6 +70,19 @@ It replaces the hand-rolled `--no-open --bind-host 0.0.0.0 --port "$PORT"`
 recipe this starter used to carry, which upstream names as the thing every
 hosted template duplicates and gets subtly wrong in a different way.
 
+### The port, for now
+
+Hosted mode resolves its port as `--port` > `CODEYAM_CONTROL_PORT` > `PORT` >
+the sole published `.replit` `[[ports]]` local port. That last step does not
+exist yet, so a start path supplying no `PORT` falls back to a project-derived
+control port that nothing routes to — the editor comes up healthy on a port
+Preview is not watching, and Run looks like it did nothing.
+
+Until then `scripts/env.mjs` defaults `PORT` to `5000` for every start path.
+Delete that line once the editor adopts the published port itself; the
+`[[ports]]` entry is what makes that work, and `npm run check:replit` asserts
+against `[[ports]]` rather than against a `PORT=`, so it survives the change.
+
 ## Which build am I running?
 
 The startup banner prints it, and so does:
@@ -87,13 +101,21 @@ channel: staging
 
 ## Getting the newest staging build
 
-The Run workflow refreshes on every start. To pull a build mid-session:
+Refreshing is deliberately separate from Run. Either run the
+`Update staging build` workflow, or:
 
 ```bash
 npm run update:staging
 ```
 
-Then restart the editor so the new binary is the one serving.
+Then restart the `Start application` workflow so the new binary is the one
+serving.
+
+It is separate because Replit restarts a workflow when it detects a package
+install. An install inside the long-running web workflow restarts that workflow
+before the editor ever binds port `5000`: the workflow loops, and Replit
+eventually reports that the port was never opened. That is not a staging-build
+problem — it is what the workflow structure does with any install.
 
 ## Why no lockfile
 
@@ -126,6 +148,34 @@ npx codeyam-editor editor install-hooks
 That command creates a commit, which is why `npm run setup` does not run it
 for you.
 
+## Check the workspace configuration
+
+```bash
+npm run check:replit
+```
+
+Asserts the committed `.replit` against what a fresh import needs in order to
+reach CodeYam in the Preview panel: the Run button reaches a workflow marked
+`outputType = "webview"`, that workflow waits for the published port, it
+installs no packages, exactly one `[[ports]]` entry is published, every start
+path runs the same command, and nothing configures the workspace for
+deployment.
+
+It then asserts the parts of `package.json` that Run depends on: `npm run
+codeyam` still points at the startup wrapper, the other starter scripts and the
+editor dependency survive, no `dev` or `start` script launches the editor
+recursively, and no AI provider CLI is pinned as a dependency. Those checks are
+about coexistence — `package.json` is the one file shared with the app built on
+top of the starter, so run this after adding an app. See [Building an app in
+this workspace](#building-an-app-in-this-workspace).
+
+It exists because the editor can pass every check in `npm run smoke` while
+Preview stays unusable — that is exactly how the first hosted import failed.
+
+`.github/workflows/ci.yml` runs this, `npm run setup`, and `npm run smoke` on
+every push and pull request, so a `.replit` change that would break a fresh
+import fails there rather than in someone's first workspace.
+
 ## Smoke-test the hosted first run
 
 ```bash
@@ -133,8 +183,9 @@ npm run smoke          # defaults to port 5000
 PORT=5177 npm run smoke # when 5000 is taken
 ```
 
-Clones HEAD into a temp dir, runs `npm ci`, starts the editor on `0.0.0.0`, and
-asserts the real first-run sequence: the `cy_session` cookie is issued
+Clones HEAD into a temp dir, runs the `npm run check:replit` assertions against
+the committed `.replit`, installs, starts the editor on `0.0.0.0`, and asserts
+the real first-run sequence: the `cy_session` cookie is issued
 `HttpOnly` and matches `.codeyam/session-token`; a protected endpoint returns
 401 without it and 200 with either the cookie or a bearer token; and
 `/__codeyam_preview/` serves the editor's no-app surface as HTML.
@@ -150,16 +201,84 @@ Two notes if it fails:
   answers `502` rather than the editor surface.
 - On macOS, AirPlay Receiver holds port `5000` by default, so pass `PORT`.
 
-## Start the editor
+## Start in Replit
 
-1. Create a private Replit project from this repository.
-2. Click **Run**. The `CodeYam Editor` workflow installs dependencies, runs
-   `npm run codeyam`, and waits for port `5000`.
-3. Open the web preview.
+1. Import this repository as a **private** Replit project.
+2. Run `npm run update:staging` once, in the Shell (or run the
+   `Update staging build` workflow). This installs dependencies and pulls the
+   newest staging build.
+3. Click **Run**.
+4. Replit starts the `Start application` web workflow, which runs
+   `npm run codeyam` and waits for port `5000`.
+5. Preview shows the CodeYam provider-selection screen.
 
-The first run initializes CodeYam and lets you pick an AI coding provider. To
-pin a provider ahead of that first run instead, set `CODEYAM_PROVIDER` to
-`claude`, `codex`, `gemini`, or `opencode`.
+That is the whole contract, and `npm run smoke` exercises it. Three things are
+worth knowing before the first run:
+
+- **Updating the staging build is separate from Run**, for the reason in
+  [Getting the newest staging build](#getting-the-newest-staging-build).
+- **Provider setup happens after the editor opens**, on the first screen. To
+  pin a provider ahead of that instead, set `CODEYAM_PROVIDER` to `claude`,
+  `codex`, `gemini`, or `opencode`.
+- **The editor runs fine before you have configured an app.** It prints
+
+  ```
+  No app start command configured yet — serving the editor UI only
+  ```
+
+  That is the normal state of a fresh import, not a failure.
+
+**Keep the workspace and its preview URL private, and do not configure this
+workspace for deployment.** In `open` access mode anyone who reaches the
+preview reaches a live AI agent with write access to your source.
+
+### If Preview does not show the editor
+
+The three layers fail differently, so check them in order:
+
+1. **Editor startup** — the workflow log shows the version banner, `channel:
+   staging`, and a bind on `0.0.0.0:5000`. Hosted mode exits `2` with a
+   `Next valid action:` line when a precondition is wrong, so read the log.
+2. **Workspace wiring** — the editor is serving but Preview says the app is not
+   running. That is `.replit`, not the editor: run `npm run check:replit`.
+3. **App preview** — the editor is open but the app pane is empty. That is the
+   app start command, configured inside CodeYam, and is expected to be unset on
+   a fresh import.
+
+## Building an app in this workspace
+
+Application code goes **at the top level**, alongside the starter. The two are
+designed to coexist, and the agent working in this workspace is told the same
+thing by `replit.md`, so it builds in the root rather than stopping to ask
+where the app should live.
+
+```
+/                     the repo root
+  .replit             reserved — Run button, ports, the Preview workflow
+  scripts/            reserved — startup wrapper and workspace checks
+  .codeyam/           reserved — CodeYam config and the session token
+  replit.md           reserved — the agent's instructions
+  package.json        shared  — merge into it, never replace it
+  index.html          app
+  src/                app
+```
+
+The starter leaves the conventional application names free on purpose:
+
+- `dev` is the app's dev-server script. CodeYam detects it as the app start
+  command, which is why nothing in the starter is named `dev` or `start`.
+- Port `3000` is the app's port; the editor is on `5000`.
+
+The one file that needs care is `package.json`: keep the `codeyam`, `setup`,
+`smoke`, `check:replit`, `doctor`, `update:staging`, `channel`, and `init:*`
+scripts and the `@codeyam-editor/codeyam-editor` dependency, and add the app's
+own alongside. A scaffolder that writes its own `package.json` over ours takes
+`npm run codeyam` with it, and the only symptom is a Run button that appears to
+do nothing — so `npm run check:replit` asserts those survive.
+
+This section is kept in step with the stable starter's; the agent-facing
+contract is the same in both repos even though the rest of `replit.md`
+diverges.
 
 ## AI provider required
 
