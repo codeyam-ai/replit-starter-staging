@@ -93,8 +93,13 @@ function parseValue(raw) {
 /// a package-install change, so an install inside the long-running web workflow
 /// restarts the workflow before it ever reaches the editor start -- the
 /// workflow loops, and Replit eventually reports the port was never opened.
+/// `npm run bootstrap` is listed because its first phase is an install.
 const INSTALL_COMMAND =
-  /\b(?:npm|pnpm|yarn|bun)\s+(?:ci\b|install\b|add\b)|\bnpm\s+run\s+update:/;
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:ci\b|install\b|add\b)|\bnpm\s+run\s+(?:update:|bootstrap\b)/;
+
+/// The first-run setup workflow. Kept in step with `SETUP_WORKFLOW` in
+/// `scripts/setup-phases.mjs`, which names it in every setup failure message.
+const SETUP_WORKFLOW = "Set up CodeYam";
 
 const isInstallTask = (task) =>
   String(task.task ?? "").startsWith("packager.") ||
@@ -152,17 +157,18 @@ export function checkReplitConfig(text) {
     `runButton = ${JSON.stringify(runButton ?? null)}`,
   );
 
-  const reaches = (from, seen = new Set()) => {
-    if (!from || seen.has(from.name)) return false;
+  const reaches = (from, goal, seen = new Set()) => {
+    if (!from || !goal || seen.has(from.name)) return false;
     seen.add(from.name);
-    if (from === web) return true;
+    if (from === goal) return true;
     return tasks(from).some(
-      (t) => t.task === "workflow.run" && reaches(byName.get(t.args), seen),
+      (t) =>
+        t.task === "workflow.run" && reaches(byName.get(t.args), goal, seen),
     );
   };
   check(
     "the run button reaches the webview workflow",
-    Boolean(web) && reaches(target),
+    Boolean(web) && reaches(target, web),
     `${JSON.stringify(runButton ?? null)} does not run the webview workflow`,
   );
 
@@ -208,6 +214,26 @@ export function checkReplitConfig(text) {
     "this starter must not be deployed as a public application",
   );
 
+  // 7. A first-run setup workflow exists and runs the resumable bootstrap. Run
+  // refuses to start before setup and names this workflow as the fix, so it has
+  // to be there to name.
+  const setup = byName.get(SETUP_WORKFLOW);
+  check(
+    `a "${SETUP_WORKFLOW}" workflow runs npm run bootstrap`,
+    tasks(setup).some(
+      (t) => t.task === "shell.exec" && /\bnpm\s+run\s+bootstrap\b/.test(String(t.args ?? "")),
+    ),
+    setup ? "it has no `npm run bootstrap` task" : "no such workflow",
+  );
+
+  // 8. ...and it is never what Run starts. Setup installs packages; reached
+  // from Run it would bring back the restart loop check 4 guards against.
+  check(
+    "the setup workflow is not reachable from the run button",
+    !reaches(target, setup) && !INSTALL_COMMAND.test(String(config.run ?? "")),
+    `runButton = ${JSON.stringify(runButton ?? null)}, run = ${JSON.stringify(config.run ?? null)}`,
+  );
+
   return results;
 }
 
@@ -251,7 +277,7 @@ export function checkStarterPackage(text) {
 
   // 2. The workspace checks themselves, plus provider switching. Losing these
   // is recoverable, but silently: the next `.replit` mistake goes uncaught.
-  const required = ["setup", "smoke", "check:replit", "doctor"];
+  const required = ["setup", "bootstrap", "smoke", "check:replit", "doctor"];
   const missing = required.filter((name) => !scripts[name]);
   check(
     "the starter scripts are intact",

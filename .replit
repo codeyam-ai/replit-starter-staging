@@ -39,6 +39,20 @@ waitForPort = 5000
 [workflows.workflow.metadata]
 outputType = "webview"
 
+# First-run setup: install the editor, initialize it, verify it. Run it once on
+# a fresh import, then press Run -- Run refuses to start before setup and names
+# this workflow. It installs packages, so Replit may restart it mid-run; that is
+# safe, because every phase checks whether it is already done and a re-run
+# resumes where the last one stopped. Never reachable from the Run button.
+[[workflows.workflow]]
+name = "Set up CodeYam"
+author = "codeyam"
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run bootstrap"
+
 # Pulling a newer staging build. Deliberately a separate, short-lived workflow:
 # it is an explicit action, not part of starting the editor. Restart
 # `Start application` afterwards so the new binary is the one serving.

@@ -17,7 +17,13 @@
 import { spawn, spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkReplitConfig, checkStarterPackage } from "./replit-config.mjs";
@@ -215,7 +221,87 @@ try {
     }
   }
 
-  // 3. Install. Catches a lockfile that cannot resolve from the public
+  // 3. Run before setup. A fresh import has no node_modules, and Run must not
+  // install (see scripts/bootstrap.mjs). It has to say which setup phase is
+  // missing and how to run it -- this used to be a bare
+  // `spawnSync codeyam-editor ENOENT` that named neither.
+  console.log("\nRun before setup");
+  const out = (r) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  const early = spawnSync("node", ["scripts/start-codeyam.mjs"], {
+    cwd: checkout,
+    encoding: "utf8",
+    env: { ...process.env, PORT },
+  });
+  check(
+    "Run without setup exits non-zero",
+    early.status !== null && early.status !== 0,
+    `exit ${early.status}`,
+  );
+  check(
+    'Run names the "install-editor" phase and the setup workflow',
+    /Setup phase "install-editor" not complete/.test(out(early)) &&
+      /Set up CodeYam/.test(out(early)),
+    out(early).trim().slice(0, 300),
+  );
+  check(
+    "Run created nothing before setup",
+    !existsSync(join(checkout, ".codeyam")),
+    ".codeyam/ exists",
+  );
+
+  // 4. Interrupted setup resumes. `--stop-after` stands in for Replit
+  // restarting the setup workflow mid-run: deterministic, where a kill is not.
+  console.log("\nInterrupted setup");
+  const userFile = join(checkout, "my-notes.txt");
+  writeFileSync(userFile, "user content\n");
+  const bootstrap = (args) =>
+    spawnSync("node", ["scripts/bootstrap.mjs", ...args], {
+      cwd: checkout,
+      encoding: "utf8",
+      env: { ...process.env, PORT },
+    });
+
+  const first = bootstrap(["--stop-after", "install-editor"]);
+  check(
+    "setup stopped after install-editor",
+    first.status === 0 && /Stopped after "install-editor"/.test(out(first)),
+    out(first).trim().slice(-300),
+  );
+  check(
+    "init had not run yet",
+    !existsSync(join(checkout, ".codeyam", "editor.json")),
+  );
+  const progress = JSON.parse(
+    readFileSync(join(checkout, ".codeyam-setup.json"), "utf8"),
+  );
+  check(
+    "progress records install-editor as done",
+    progress.phases?.["install-editor"]?.status === "done",
+    JSON.stringify(progress),
+  );
+
+  const second = bootstrap([]);
+  check(
+    "re-run completes",
+    second.status === 0,
+    out(second).trim().slice(-600),
+  );
+  check(
+    "re-run resumed at init without reinstalling",
+    /install-editor \(already complete\)/.test(out(second)) &&
+      !/Installing @codeyam-editor/.test(out(second)),
+    out(second).trim().slice(0, 300),
+  );
+  check(
+    "init ran on the re-run",
+    existsSync(join(checkout, ".codeyam", "editor.json")),
+  );
+  check(
+    "setup left user files untouched",
+    readFileSync(userFile, "utf8") === "user content\n",
+  );
+
+  // 5. Install. Catches a lockfile that cannot resolve from the public
   // registry -- the exact failure that shipped in the first version of this
   // repo, where every `resolved` URL pointed at Replit's internal mirror.
   console.log("\nInstall");
@@ -234,7 +320,7 @@ try {
     undefined,
   );
 
-  // 4. Start on 0.0.0.0:PORT, exactly as the Replit workflow does.
+  // 6. Start on 0.0.0.0:PORT, exactly as the Replit workflow does.
   console.log("\nStart");
   // `detached` puts the whole chain -- npm, the wrapper, and the editor binary
   // it spawns -- into one process group. Signalling the group is the only
@@ -284,7 +370,7 @@ try {
     );
   }
 
-  // 5. GET / issues the session cookie on the HTML document.
+  // 7. GET / issues the session cookie on the HTML document.
   console.log("\nSession cookie");
   check("GET / returned 200", root.status === 200, `got ${root.status}`);
   const setCookie = root.headers.get("set-cookie") ?? "";
@@ -312,7 +398,7 @@ try {
     "the bearer path and the browser path must share one token",
   );
 
-  // 6. A protected endpoint is genuinely protected. /api/scenarios is used
+  // 8. A protected endpoint is genuinely protected. /api/scenarios is used
   // deliberately: /api/health, /api/config and /api/session-info are
   // token-EXEMPT by design (read-only, non-secret), so probing those would
   // pass whether or not auth works at all.
@@ -332,7 +418,7 @@ try {
     "the CLI and operator-script path must work too",
   );
 
-  // 7. The hosted preview route.
+  // 9. The hosted preview route.
   console.log("\nHosted preview");
   const prevAuthed = await fetchPreviewWhenReady({ cookie });
   const prevBody = await prevAuthed.text();
@@ -379,7 +465,7 @@ try {
     `got ${prevAuthed.status} with ${prevBody.length} bytes`,
   );
 
-  // 8. A cold browser navigation must land somewhere usable.
+  // 10. A cold browser navigation must land somewhere usable.
   //
   // This is the case a user hits when the platform restores or deep-links the
   // preview URL before any visit to `/`, so the request carries no cookie. It
