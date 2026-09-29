@@ -7,6 +7,11 @@ import {
   provider,
   providerError,
 } from "./env.mjs";
+import {
+  checkEditorInstalled,
+  phaseMessage,
+  withLocalBin,
+} from "./setup-phases.mjs";
 
 for (const error of [providerError(), portError()]) {
   if (error) {
@@ -15,19 +20,23 @@ for (const error of [providerError(), portError()]) {
   }
 }
 
-const env = childEnv();
+const env = withLocalBin(childEnv(), process.cwd());
 
-// Report which build is about to run. `--version` prints the version and the
-// release channel, so a staging workspace is identifiable from the log without
-// digging through node_modules -- the thing you most want confirmed when the
-// whole point of the workspace is testing an unreleased build.
-const version = spawnSync("codeyam-editor", ["--version"], {
-  encoding: "utf8",
-  env,
-});
-if (version.status === 0 && version.stdout) {
-  console.log(version.stdout.trim());
+// Run never installs anything: Replit restarts a workflow that installs
+// packages, so the editor would never bind. When the install has not happened,
+// say which setup phase is missing and how to run it, instead of failing later
+// with a bare `spawnSync codeyam-editor ENOENT`.
+//
+// The same check reports which build is about to run. `--version` prints the
+// version and the release channel, so a staging workspace is identifiable from
+// the log without digging through node_modules -- the thing you most want
+// confirmed when the whole point of the workspace is testing an unreleased build.
+const installed = checkEditorInstalled(process.cwd(), env);
+if (!installed.ok) {
+  console.error(phaseMessage("install-editor", installed.detail));
+  process.exit(1);
 }
+if (installed.version) console.log(installed.version);
 
 // `codeyam-editor start` only self-initializes an empty folder. This repo ships
 // a package.json, so it reads as an existing project and needs an explicit init.
@@ -44,11 +53,12 @@ if (!existsSync(".codeyam/editor.json")) {
   );
 
   if (init.error) {
-    console.error(`Unable to initialize CodeYam Editor: ${init.error.message}`);
+    console.error(phaseMessage("init", `codeyam-editor init could not run (${init.error.message})`));
     process.exit(1);
   }
 
   if (init.status !== 0) {
+    console.error(phaseMessage("init", `codeyam-editor init exited ${init.status}`));
     process.exit(init.status ?? 1);
   }
 }

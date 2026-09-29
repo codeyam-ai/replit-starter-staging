@@ -82,7 +82,7 @@ if (existsSync(".codeyam/editor.json")) {
   const init = run(provider ? ["init", "--provider", provider] : ["init"], env);
   if (init.error) {
     warn(`could not run codeyam-editor: ${init.error.message}`);
-    warn("run `npm install` first");
+    warn('run the "Set up CodeYam" workflow (or `npm run bootstrap`) first');
   } else if (init.status !== 0) {
     warn("codeyam-editor init failed");
     replay(init);

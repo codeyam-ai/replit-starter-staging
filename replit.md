@@ -27,8 +27,8 @@ Reserved — never delete, move, rename, or overwrite these:
 | `package.json` | Shared: see below |
 
 `package.json` is shared between the starter and the app. **Merge into it;
-never replace it.** Keep the `codeyam`, `setup`, `smoke`, `check:replit`,
-`doctor`, `update:staging`, `channel`, and `init:*` scripts, and keep the
+never replace it.** Keep the `codeyam`, `setup`, `bootstrap`, `smoke`,
+`check:replit`, `doctor`, `update:staging`, `channel`, and `init:*` scripts, and keep the
 `@codeyam-editor/codeyam-editor` dependency on the `staging` dist-tag. Add the
 app's own scripts and dependencies alongside them.
 
@@ -53,8 +53,46 @@ It asserts both `.replit` and the reserved parts of `package.json`, so a
 scaffolder that overwrote either fails there rather than as a Run button that
 silently does nothing.
 
+## First-run setup hooks
+
+Setup (installing the editor, initializing it, verifying it) runs from its own
+`Set up CodeYam` workflow, and Run refuses to start before it has happened. Two
+platform questions decided that shape. Both answers come from Replit's
+documentation and this repo's history, **not from a test on a fresh import** —
+re-check them there before relying on either:
+
+1. **Does an import install `package.json` dependencies automatically?** Not
+   assumed. Replit's packager can install declared dependencies, but whether a
+   fresh GitHub import populates `node_modules` before the first Run is
+   unverified, and imports of this starter have reached Run without it (the
+   `spawnSync codeyam-editor ENOENT` failure). So setup never counts on it.
+   When an install did happen, the `install-editor` phase sees that and skips.
+2. **Is there a boot hook that runs before Run without the restart loop?**
+   `.replit` documents an `onBoot` command, but whether an install inside it
+   triggers the same restart that breaks `Start application`, or races the Run
+   workflow, is unverified. So it is not used: an install is never hidden
+   inside Run or inside a hook Run depends on.
+
+The phases, each of which checks its own result before and after running:
+
+| Phase | Done when |
+| --- | --- |
+| `install-editor` | `@codeyam-editor/codeyam-editor` resolves and `codeyam-editor --version` runs |
+| `init` | `.codeyam/editor.json` exists |
+| `verify` | `codeyam-editor editor health-status --editor-only` passes (skipped on builds that predate the flag) |
+
+Progress is recorded in `.codeyam-setup.json` (gitignored), for inspection
+only: a re-run re-checks every phase and resumes at the first one not done.
+Signing in to a build agent and starting the app's dev server are deliberately
+not phases — both happen inside the editor and neither blocks onboarding.
+
+`Set up CodeYam` installs whatever the `staging` dist-tag points at on the
+first run; `Update staging build` is still how to pull a newer one later.
+
 ## Commands
 
+- Set up a fresh import with the `Set up CodeYam` workflow, or
+  `npm run bootstrap` in the Shell. Safe to re-run; it resumes.
 - Run the editor with `npm run codeyam`. The `Start application` workflow in
   `.replit` is the Run-button path to it; it waits for port `5000` and is the
   workflow the Preview panel attaches to.
@@ -83,8 +121,9 @@ silently does nothing.
   version number — that defeats the purpose of this repo.
 - Do not commit `package-lock.json`. It is gitignored deliberately so each
   install resolves the newest staging build.
-- Keep `setup.mjs`, `smoke.mjs`, `replit-config.mjs`, and `check-replit.mjs`
-  byte-identical to the stable starter at `codeyam-ai/replit-starter`.
+- Keep `setup.mjs`, `smoke.mjs`, `replit-config.mjs`, `check-replit.mjs`,
+  `bootstrap.mjs`, and `setup-phases.mjs` byte-identical to the stable starter
+  at `codeyam-ai/replit-starter`.
   `env.mjs` and `start-codeyam.mjs` diverge on purpose.
 - Do not add an AI provider CLI (`@anthropic-ai/claude-code`, `@openai/codex`,
   `@google/gemini-cli`, `opencode-ai`) as a dependency. CodeYam installs the
@@ -104,7 +143,9 @@ silently does nothing.
   webview workflow; without it, Run appears to do nothing however healthy the
   editor is.
 - Never put a package install (`packager.*`, `npm install`, `npm ci`,
-  `npm run update:staging`) in the `Start application` workflow. Replit
+  `npm run update:staging`, `npm run bootstrap`) in the `Start application`
+  workflow, or make the `Set up CodeYam` workflow reachable from the Run
+  button. Replit
   restarts a workflow when it detects a package install, so the workflow would
   restart before the editor binds and the port would never open.
 - Keep exactly one `[[ports]]` entry, mapping the editor port to an external

@@ -13,6 +13,8 @@ package-lock.json
 .codeyam/editor.local.json
 .codeyam/logs/
 .codeyam/run/
+# First-run setup progress (scripts/bootstrap.mjs); informational only
+.codeyam-setup.json
 
 # AI provider credentials and local state
 .claude/settings.local.json
