@@ -16,8 +16,8 @@ jobs:
   workspace-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - run: npm run check:replit
@@ -25,17 +25,29 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # The smoke test clones HEAD, so it needs real history, not a
         # detached-commit-only checkout.
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       # No lockfile here on purpose: this repo always resolves the newest
       # staging build, so `npm ci` is not an option.
       - run: npm install --no-audit --no-fund
+      # The dependency must stay on the tag itself. `npm install <pkg>@staging`
+      # without --no-save rewrites it to `^<that build>`, and a caret range on a
+      # prerelease never matches the next version's prerelease -- installs then
+      # quietly resolve the stable release while CI stays green.
+      - name: installed build is the current staging dist-tag
+        run: |
+          spec=$(node -p 'require("./package.json").dependencies["@codeyam-editor/codeyam-editor"]')
+          installed=$(node -p 'require("@codeyam-editor/codeyam-editor/package.json").version')
+          tagged=$(npm view @codeyam-editor/codeyam-editor dist-tags.staging)
+          echo "spec=$spec installed=$installed staging=$tagged"
+          test "$spec" = staging
+          test "$installed" = "$tagged"
       - run: npm run channel
       - run: npm run setup
       - run: npm run smoke

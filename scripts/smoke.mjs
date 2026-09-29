@@ -16,8 +16,9 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkReplitConfig, checkStarterPackage } from "./replit-config.mjs";
 
@@ -103,6 +104,31 @@ async function requirePortFree(port) {
     );
     probe.once("listening", () => probe.close(resolve));
     probe.listen(port, "0.0.0.0");
+  });
+}
+
+/// The first non-internal IPv4 address of this machine, or undefined when it
+/// has none (an offline laptop, a network-less container).
+function externalIPv4() {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return undefined;
+}
+
+/// Whether something accepts TCP connections on host:port.
+function canConnect(host, port) {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port: Number(port), timeout: 3000 });
+    const done = (ok) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.once("timeout", () => done(false));
   });
 }
 
@@ -235,14 +261,28 @@ try {
 
   const root = await waitForBoot();
   check(`editor answered on ${BASE}`, true);
-  // Match the address, not the sentence around it: the legacy path prints
-  // "running at http://0.0.0.0:<port>" and hosted mode prints it in an indented
-  // "local:" row. Pinning either phrasing tests the banner, not the bind.
-  check(
-    "bound to 0.0.0.0, not just loopback",
-    new RegExp(`0\\.0\\.0\\.0:${PORT}`).test(log),
-    `no 0.0.0.0:${PORT} in the startup output`,
-  );
+  // Test the bind itself, not the banner: a loopback-only bind refuses a
+  // connection addressed to this machine's external interface. The banner is
+  // only a fallback for machines with no such interface, and even then it is
+  // waited for -- the editor prints it after it starts answering, so reading
+  // the log the moment the first request succeeds races it (CI lost that race).
+  const external = externalIPv4();
+  if (external) {
+    check(
+      "bound to 0.0.0.0, not just loopback",
+      await canConnect(external, PORT),
+      `connection to ${external}:${PORT} was refused`,
+    );
+  } else {
+    const banner = new RegExp(`0\\.0\\.0\\.0:${PORT}`);
+    const deadline = Date.now() + 10_000;
+    while (!banner.test(log) && Date.now() < deadline) await sleep(250);
+    check(
+      "bound to 0.0.0.0, not just loopback",
+      banner.test(log),
+      `no external interface to probe, and no 0.0.0.0:${PORT} in the startup output`,
+    );
+  }
 
   // 5. GET / issues the session cookie on the HTML document.
   console.log("\nSession cookie");
