@@ -2,12 +2,22 @@ entrypoint = "scripts/start-codeyam.mjs"
 modules = ["nodejs-20"]
 run = "npm run codeyam"
 
-# Exactly one published port. Hosted CodeYam resolves its public origin from
-# this mapping, so a second entry is ambiguous and none leaves the editor bound
-# to a port nothing routes to.
+# The editor, on the bare dev-domain URL. Hosted CodeYam resolves its public
+# origin from the entry on external port 80, so exactly one may claim it; the
+# startup script names port 5000 explicitly, so the second entry below is not
+# ambiguous.
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+# The app's dev server. When an app will not hydrate under the editor's
+# `/__codeyam_preview` subpath, the Live Preview moves to the app's own origin,
+# and without this mapping the user's browser cannot reach it: the page renders
+# but ignores clicks while every headless check passes. Shipped here so that is
+# never discovered mid-session.
+[[ports]]
+localPort = 3000
+externalPort = 3000
 
 [workflows]
 runButton = "Project"

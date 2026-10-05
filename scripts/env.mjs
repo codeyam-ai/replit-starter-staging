@@ -77,19 +77,14 @@ export function childEnv() {
     npm_config_prefix: prefix,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     ...libraryPath(),
-    // INTERIM. `start --hosted` resolves its port as
-    // `--port` > CODEYAM_CONTROL_PORT > PORT > the sole published `.replit`
-    // `[[ports]]` local port. Until that last step exists, a start path that
-    // supplies no PORT -- the top-level `run` command, or a plain
-    // `npm run codeyam` in the Shell -- falls back to a project-derived control
-    // port that nothing routes to, and Preview waits on 5000 forever. Setting
-    // it here, in the one place every start path passes through, keeps those
-    // paths in agreement without duplicating `PORT=5000` across `.replit`.
-    //
-    // Delete this line once the editor adopts the published port itself; the
-    // `[[ports]]` entry is what makes that work, and the assertions in
-    // `scripts/replit-config.mjs` are written against `[[ports]]`, not against
-    // this, so they survive the change.
+    // `start --hosted` resolves its port as `--port` > CODEYAM_CONTROL_PORT >
+    // PORT > the sole published `.replit` `[[ports]]` local port. That last
+    // step needs exactly one entry, and `.replit` publishes two -- the editor's
+    // 5000 and the app's 3000 -- so a start path that supplies no PORT (the
+    // top-level `run` command, or a plain `npm run codeyam` in the Shell)
+    // would fail with the port undeclared. Setting it here, in the one place
+    // every start path passes through, keeps those paths in agreement without
+    // duplicating `PORT=5000` across `.replit`. Keep it.
     PORT: port,
     // Declared here rather than written into `.codeyam/editor.json` so the
     // decision survives a re-scaffold and stays visible in this repo, where it

@@ -103,6 +103,17 @@ function parseValue(raw) {
   return raw;
 }
 
+/// The app's port, by the starter's convention: `dev` serves on it, and the
+/// editor -- on 5000 -- leaves it free.
+export const APP_PORT = 3000;
+
+/// External ports Replit fronts besides 80, per its port reference
+/// (docs.replit.com/references/project-setup/ports). A mapping to any other
+/// external port is ignored, so the origin it implies never answers.
+const REPLIT_EXTRA_EXTERNAL_PORTS = [
+  3000, 3001, 3002, 3003, 4200, 5000, 5173, 6000, 6800, 8000, 8008, 8080, 8081,
+];
+
 /// Anything that installs packages. Replit restarts a workflow when it detects
 /// a package-install change, so an install inside the long-running web workflow
 /// restarts the workflow before it ever reaches the editor start -- the
@@ -122,21 +133,45 @@ export function checkReplitConfig(text) {
   const results = [];
   const check = (name, ok, detail) => results.push({ name, ok, detail });
 
-  // 1. Exactly one published port. Hosted mode resolves its public origin from
-  // these mappings: two entries are ambiguous and upstream refuses to guess,
-  // none means the editor can bind a port nothing routes to.
+  // 1. The editor is published on external port 80, the bare dev-domain URL.
+  // Exactly one entry may claim it: hosted CodeYam resolves the editor's public
+  // origin from that mapping, and none leaves the editor on a port nothing
+  // routes to.
   const ports = Array.isArray(config.ports) ? config.ports : [];
-  const onePort = ports.length === 1;
+  const describe = ports
+    .map((p) => `${p.localPort} -> ${p.externalPort}`)
+    .join(", ");
+  const editorPorts = ports.filter((p) => p.externalPort === 80);
   check(
-    "exactly one [[ports]] entry",
-    onePort,
-    `found ${ports.length}: ${ports.map((p) => p.localPort).join(", ") || "(none)"}`,
+    "exactly one [[ports]] entry publishes on external port 80",
+    editorPorts.length === 1 && Number.isInteger(editorPorts[0].localPort),
+    `found: ${describe || "(none)"}`,
   );
-  const localPort = onePort ? ports[0].localPort : undefined;
+  const localPort =
+    editorPorts.length === 1 ? editorPorts[0].localPort : undefined;
+
+  // 2. The app's port is published too. When an app will not hydrate under the
+  // editor's `/__codeyam_preview` subpath, the editor moves the Live Preview to
+  // the app's own origin; unpublished, that origin is reachable by the headless
+  // capture browser but not by the user's, so every check passes while the
+  // user's pane shows a page that ignores clicks. Its external port must be one
+  // Replit fronts besides 80, or the mapping is silently ignored.
+  const appPorts = ports.filter((p) => p.localPort === APP_PORT);
   check(
-    "the published port maps to an external port",
-    onePort && Number.isInteger(localPort) && Boolean(ports[0].externalPort),
-    JSON.stringify(ports[0] ?? null),
+    `the app port ${APP_PORT} is published on an external port Replit fronts`,
+    appPorts.length === 1 &&
+      REPLIT_EXTRA_EXTERNAL_PORTS.includes(appPorts[0].externalPort),
+    `found: ${describe || "(none)"}`,
+  );
+
+  // 3. No local port is published twice: two mappings for one port leave which
+  // URL fronts it to whichever entry a reader happens to pick.
+  const locals = ports.map((p) => p.localPort);
+  const duplicated = locals.filter((port, i) => locals.indexOf(port) !== i);
+  check(
+    "no local port is published twice",
+    duplicated.length === 0,
+    `published more than once: ${[...new Set(duplicated)].join(", ")}`,
   );
 
   const workflows = Array.isArray(config.workflows?.workflow)
@@ -145,7 +180,7 @@ export function checkReplitConfig(text) {
   const byName = new Map(workflows.map((w) => [w.name, w]));
   const tasks = (w) => (Array.isArray(w?.tasks) ? w.tasks : []);
 
-  // 2. Preview attaches to a webview workflow, and the Run button reaches it.
+  // 4. Preview attaches to a webview workflow, and the Run button reaches it.
   // Without `outputType = "webview"` there is nothing for Preview to bind to,
   // however healthy the editor is.
   const webWorkflows = workflows.filter(
@@ -180,23 +215,23 @@ export function checkReplitConfig(text) {
     `${JSON.stringify(runButton ?? null)} does not run the webview workflow`,
   );
 
-  // Checks 3 and 4 describe the long-running workflow. When no webview
+  // Checks 5 and 6 describe the long-running workflow. When no webview
   // workflow exists at all -- the shape that broke the first imports -- they
   // fall back to whatever the Run button actually starts, so the report names
   // every problem in one pass instead of one per fix.
   const longRunning = web ?? target;
 
-  // 3. The web workflow waits for the port that is actually published. This is
+  // 5. The web workflow waits for the port that is actually published. This is
   // the assertion that catches startup paths disagreeing about the port.
   const starts = tasks(longRunning).filter((t) => t.task === "shell.exec");
   const waits = starts.map((t) => t.waitForPort).filter((p) => p !== undefined);
   check(
-    "the webview workflow waits for the published port",
+    "the webview workflow waits for the editor's published port",
     waits.length === 1 && waits[0] === localPort,
-    `waitForPort ${JSON.stringify(waits)} vs [[ports]] localPort ${localPort}`,
+    `waitForPort ${JSON.stringify(waits)} vs the external-80 localPort ${localPort}`,
   );
 
-  // 4. No package installation in the long-running web workflow.
+  // 6. No package installation in the long-running web workflow.
   const installs = tasks(longRunning).filter(isInstallTask);
   check(
     "no package installation in the webview workflow",
@@ -204,7 +239,7 @@ export function checkReplitConfig(text) {
     installs.map((t) => t.args ?? t.task).join("; "),
   );
 
-  // 5. Every supported start path runs the same command. The top-level `run`
+  // 7. Every supported start path runs the same command. The top-level `run`
   // is a real entry point -- Replit uses it when no workflow is selected -- and
   // when it differs from the workflow's command the two reach different ports,
   // so Run looks like it does nothing.
@@ -214,7 +249,7 @@ export function checkReplitConfig(text) {
     `run = ${JSON.stringify(config.run ?? null)}, workflow = ${JSON.stringify(starts[0]?.args ?? null)}`,
   );
 
-  // 6. Not configured for public deployment. The preview of a workspace running
+  // 8. Not configured for public deployment. The preview of a workspace running
   // an AI coding agent with write access to the repo stays private.
   check(
     "no deployment configuration",
@@ -222,7 +257,7 @@ export function checkReplitConfig(text) {
     "this starter must not be deployed as a public application",
   );
 
-  // 7. The system libraries the editor's headless Chromium needs. Without them
+  // 9. The system libraries the editor's headless Chromium needs. Without them
   // the editor runs but every preview capture fails, and adding them later
   // means restarting the workflow -- which ends the agent session inside it.
   const nixPackages = Array.isArray(config.nix?.packages)
