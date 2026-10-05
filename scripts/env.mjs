@@ -76,6 +76,7 @@ export function childEnv() {
     ...process.env,
     npm_config_prefix: prefix,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    ...libraryPath(),
     // INTERIM. `start --hosted` resolves its port as
     // `--port` > CODEYAM_CONTROL_PORT > PORT > the sole published `.replit`
     // `[[ports]]` local port. Until that last step exists, a start path that
@@ -94,5 +95,20 @@ export function childEnv() {
     // decision survives a re-scaffold and stays visible in this repo, where it
     // can be reviewed, instead of inside generated config nobody reads.
     CODEYAM_EDITOR_ACCESS_MODE: accessMode,
+  };
+}
+
+/// Replit exposes the libraries of the `.replit` `[nix]` packages through
+/// REPLIT_LD_LIBRARY_PATH. The headless Chromium the editor launches for
+/// previews is a Playwright download, not a Nix binary, so it may not see that
+/// path on its own. Fold it into LD_LIBRARY_PATH for the editor and everything
+/// it spawns, so a preview capture finds those libraries without anyone having
+/// to work out why a `.so` is missing. A no-op off Replit.
+function libraryPath() {
+  const replit = process.env.REPLIT_LD_LIBRARY_PATH;
+  if (!replit) return {};
+  const current = process.env.LD_LIBRARY_PATH;
+  return {
+    LD_LIBRARY_PATH: current ? `${replit}${delimiter}${current}` : replit,
   };
 }

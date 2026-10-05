@@ -53,3 +53,30 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run update:staging"
+
+# System libraries Playwright's headless Chromium links against. The editor
+# launches it to capture scenario previews, and Replit's base image does not
+# ship them, so without these every preview fails with a missing `.so` -- and
+# adding them after the editor is running means restarting the workflow, which
+# ends the agent session inside it. Found with `ldd` on the browser binary and
+# verified by rendering a page. `dbus.lib`, not `dbus`: Nix ships libdbus-1 in
+# the separate `lib` output. `npm run check:replit` asserts this list.
+[nix]
+channel = "stable-25_05"
+packages = [
+  "glib",
+  "nss",
+  "nspr",
+  "alsa-lib",
+  "at-spi2-core",
+  "dbus.lib",
+  "libgbm",
+  "libxkbcommon",
+  "xorg.libX11",
+  "xorg.libxcb",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+]

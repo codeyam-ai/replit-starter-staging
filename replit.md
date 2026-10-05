@@ -114,6 +114,10 @@ silently does nothing.
   and keep the `PORT` default in `scripts/env.mjs`, so every start path reaches
   the same port. That default is interim; remove it only when hosted mode
   resolves the port from `[[ports]]` itself.
+- Keep the `[nix]` packages in `.replit`. They are the system libraries the
+  editor's headless Chromium needs to capture previews; removing one breaks
+  every preview, and restoring it means restarting the workflow, which ends the
+  agent session running inside it. Add packages alongside them; do not prune.
 - Do not add a `[deployment]` section or configure this workspace for
   deployment. The preview of a workspace running an AI agent with write access
   to the repo stays private.

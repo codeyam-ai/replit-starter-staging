@@ -158,8 +158,8 @@ Asserts the committed `.replit` against what a fresh import needs in order to
 reach CodeYam in the Preview panel: the Run button reaches a workflow marked
 `outputType = "webview"`, that workflow waits for the published port, it
 installs no packages, exactly one `[[ports]]` entry is published, every start
-path runs the same command, and nothing configures the workspace for
-deployment.
+path runs the same command, nothing configures the workspace for deployment,
+and the `[nix]` block lists the system libraries headless Chromium needs.
 
 It then asserts the parts of `package.json` that Run depends on: `npm run
 codeyam` still points at the startup wrapper, the other starter scripts and the
@@ -211,6 +211,13 @@ Two notes if it fails:
 4. Replit starts the `Start application` web workflow, which runs
    `npm run codeyam` and waits for port `5000`.
 5. Preview shows the CodeYam provider-selection screen.
+
+The system libraries the editor's preview browser (Playwright's headless
+Chromium) links against are declared in the `.replit` `[nix]` block, so they
+are present from the first boot. Declaring them up front matters: a running
+process cannot pick up new libraries, so adding them mid-session means
+restarting the `Start application` workflow, which ends the agent session
+running inside the editor.
 
 That is the whole contract, and `npm run smoke` exercises it. Three things are
 worth knowing before the first run:

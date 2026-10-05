@@ -14,15 +14,29 @@
 
 /// A deliberately small TOML reader: enough for `.replit`'s shape (top-level
 /// keys, `[table]`, `[[array of tables]]`, strings, integers, booleans, and
-/// single-line arrays of strings). Not a general TOML parser, and not trying to
-/// be -- a dependency is not worth it for one file we also write ourselves.
+/// arrays of strings, single- or multi-line). Not a general TOML parser, and
+/// not trying to be -- a dependency is not worth it for one file we also write
+/// ourselves.
 export function parseReplit(text) {
   const root = {};
   let current = root;
+  let pending = null;
 
   for (const raw of text.split("\n")) {
-    const line = stripComment(raw).trim();
+    let line = stripComment(raw).trim();
     if (!line) continue;
+
+    // A value that opens an array without closing it continues on the
+    // following lines; join them into one line and parse that.
+    if (pending !== null) {
+      pending += ` ${line}`;
+      if (!line.endsWith("]")) continue;
+      line = pending;
+      pending = null;
+    } else if (/=\s*\[[^\]]*$/.test(line)) {
+      pending = line;
+      continue;
+    }
 
     if (line.startsWith("[[") && line.endsWith("]]")) {
       current = pushArrayTable(root, line.slice(2, -2).trim());
@@ -208,8 +222,45 @@ export function checkReplitConfig(text) {
     "this starter must not be deployed as a public application",
   );
 
+  // 7. The system libraries the editor's headless Chromium needs. Without them
+  // the editor runs but every preview capture fails, and adding them later
+  // means restarting the workflow -- which ends the agent session inside it.
+  const nixPackages = Array.isArray(config.nix?.packages)
+    ? config.nix.packages
+    : [];
+  const missingLibs = CHROMIUM_NIX_PACKAGES.filter(
+    (name) => !nixPackages.includes(name),
+  );
+  check(
+    "[nix] packages include headless Chromium's libraries",
+    missingLibs.length === 0,
+    `missing: ${missingLibs.join(", ")}`,
+  );
+
   return results;
 }
+
+/// Nix packages providing every shared library Playwright's headless Chromium
+/// links against that Replit's base image lacks. Derived from `ldd` on the
+/// browser binary and verified by rendering a page against exactly this set.
+/// `dbus.lib` rather than `dbus`: libdbus-1 lives in the separate `lib` output.
+export const CHROMIUM_NIX_PACKAGES = [
+  "glib",
+  "nss",
+  "nspr",
+  "alsa-lib",
+  "at-spi2-core",
+  "dbus.lib",
+  "libgbm",
+  "libxkbcommon",
+  "xorg.libX11",
+  "xorg.libxcb",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+];
 
 /// AI provider CLIs. CodeYam installs the one for the selected provider on
 /// demand; depending on any of them here pins a provider the user did not
